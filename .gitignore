@@ -1,0 +1,16 @@
+# Video test data
+*.yuv
+*.nv12
+*.nv21
+*.raw
+*.rgba
+
+# Xcode
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Build
+build/
+Build/*.yuv
