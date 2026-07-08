@@ -6,8 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		2F6FD58E2FDAAC45003E87EF /* 1280_1280.yuv in Resources */ = {isa = PBXBuildFile; fileRef = 2F6FD58D2FDAAC45003E87EF /* 1280_1280.yuv */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		2F6FD5322FDA81DB003E87EF /* MetalRender.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MetalRender.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2F6FD58D2FDAAC45003E87EF /* 1280_1280.yuv */ = {isa = PBXFileReference; lastKnownFileType = file; path = 1280_1280.yuv; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -32,6 +37,7 @@
 		2F6FD5292FDA81DB003E87EF = {
 			isa = PBXGroup;
 			children = (
+				2F6FD58D2FDAAC45003E87EF /* 1280_1280.yuv */,
 				2F6FD5342FDA81DB003E87EF /* MetalRender */,
 				2F6FD5332FDA81DB003E87EF /* Products */,
 			);
@@ -108,6 +114,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2F6FD58E2FDAAC45003E87EF /* 1280_1280.yuv in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -251,7 +258,6 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -278,7 +284,6 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
