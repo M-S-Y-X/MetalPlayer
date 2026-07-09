@@ -8,11 +8,25 @@
 
 /* Begin PBXBuildFile section */
 		2F6FD58E2FDAAC45003E87EF /* 1280_1280.yuv in Resources */ = {isa = PBXBuildFile; fileRef = 2F6FD58D2FDAAC45003E87EF /* 1280_1280.yuv */; };
+		2FBD88712FFF7BC1008ECBC6 /* 320_240.yuv in Resources */ = {isa = PBXBuildFile; fileRef = 2FBD88702FFF7BC1008ECBC6 /* 320_240.yuv */; };
+		2FBD88732FFF8EAC008ECBC6 /* conv1_bias.bin in Resources */ = {isa = PBXBuildFile; fileRef = 2FBD88722FFF8EAC008ECBC6 /* conv1_bias.bin */; };
+		2FBD88772FFF8EB4008ECBC6 /* conv1_weight.bin in Resources */ = {isa = PBXBuildFile; fileRef = 2FBD88742FFF8EB4008ECBC6 /* conv1_weight.bin */; };
+		2FBD88782FFF8EB4008ECBC6 /* conv2_bias.bin in Resources */ = {isa = PBXBuildFile; fileRef = 2FBD88752FFF8EB4008ECBC6 /* conv2_bias.bin */; };
+		2FBD88792FFF8EB4008ECBC6 /* conv2_weight.bin in Resources */ = {isa = PBXBuildFile; fileRef = 2FBD88762FFF8EB4008ECBC6 /* conv2_weight.bin */; };
+		2FBD887B2FFF8EBC008ECBC6 /* conv3_bias.bin in Resources */ = {isa = PBXBuildFile; fileRef = 2FBD887A2FFF8EBC008ECBC6 /* conv3_bias.bin */; };
+		2FBD887D2FFF8EC2008ECBC6 /* conv3_weight.bin in Resources */ = {isa = PBXBuildFile; fileRef = 2FBD887C2FFF8EC2008ECBC6 /* conv3_weight.bin */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		2F6FD5322FDA81DB003E87EF /* MetalRender.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MetalRender.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2F6FD58D2FDAAC45003E87EF /* 1280_1280.yuv */ = {isa = PBXFileReference; lastKnownFileType = file; path = 1280_1280.yuv; sourceTree = "<group>"; };
+		2FBD88702FFF7BC1008ECBC6 /* 320_240.yuv */ = {isa = PBXFileReference; lastKnownFileType = text; path = 320_240.yuv; sourceTree = "<group>"; };
+		2FBD88722FFF8EAC008ECBC6 /* conv1_bias.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = conv1_bias.bin; sourceTree = "<group>"; };
+		2FBD88742FFF8EB4008ECBC6 /* conv1_weight.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = conv1_weight.bin; sourceTree = "<group>"; };
+		2FBD88752FFF8EB4008ECBC6 /* conv2_bias.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = conv2_bias.bin; sourceTree = "<group>"; };
+		2FBD88762FFF8EB4008ECBC6 /* conv2_weight.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = conv2_weight.bin; sourceTree = "<group>"; };
+		2FBD887A2FFF8EBC008ECBC6 /* conv3_bias.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = conv3_bias.bin; sourceTree = "<group>"; };
+		2FBD887C2FFF8EC2008ECBC6 /* conv3_weight.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = conv3_weight.bin; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -37,7 +51,14 @@
 		2F6FD5292FDA81DB003E87EF = {
 			isa = PBXGroup;
 			children = (
+				2FBD887A2FFF8EBC008ECBC6 /* conv3_bias.bin */,
+				2FBD88742FFF8EB4008ECBC6 /* conv1_weight.bin */,
+				2FBD88752FFF8EB4008ECBC6 /* conv2_bias.bin */,
+				2FBD887C2FFF8EC2008ECBC6 /* conv3_weight.bin */,
+				2FBD88762FFF8EB4008ECBC6 /* conv2_weight.bin */,
+				2FBD88722FFF8EAC008ECBC6 /* conv1_bias.bin */,
 				2F6FD58D2FDAAC45003E87EF /* 1280_1280.yuv */,
+				2FBD88702FFF7BC1008ECBC6 /* 320_240.yuv */,
 				2F6FD5342FDA81DB003E87EF /* MetalRender */,
 				2F6FD5332FDA81DB003E87EF /* Products */,
 			);
@@ -115,6 +136,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				2F6FD58E2FDAAC45003E87EF /* 1280_1280.yuv in Resources */,
+				2FBD887B2FFF8EBC008ECBC6 /* conv3_bias.bin in Resources */,
+				2FBD88712FFF7BC1008ECBC6 /* 320_240.yuv in Resources */,
+				2FBD88772FFF8EB4008ECBC6 /* conv1_weight.bin in Resources */,
+				2FBD88782FFF8EB4008ECBC6 /* conv2_bias.bin in Resources */,
+				2FBD88792FFF8EB4008ECBC6 /* conv2_weight.bin in Resources */,
+				2FBD88732FFF8EAC008ECBC6 /* conv1_bias.bin in Resources */,
+				2FBD887D2FFF8EC2008ECBC6 /* conv3_weight.bin in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

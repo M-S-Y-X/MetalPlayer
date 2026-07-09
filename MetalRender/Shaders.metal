@@ -237,62 +237,42 @@ kernel void usm_sharpen(
     dst.write(result, gid);
 }
 
-// ---------- RSCNN 网络内核 ----------
+// ---------- 通用卷积 (支持任意奇数核大小) ----------
+// 注意：变量名避免使用 half（保留关键字）
 
-kernel void conv3x3_relu(
+kernel void conv2d_relu(
     texture2d_array<float, access::sample>  inTexture  [[texture(0)]],
     texture2d_array<float, access::write>   outTexture [[texture(1)]],
     constant float*  weights [[buffer(0)]],
     constant float*  bias    [[buffer(1)]],
     constant uint4&  dims    [[buffer(2)]], // [inCh, outCh, width, height]
+    constant uint&   kSize   [[buffer(3)]], // 核大小 (奇数)
     uint3 gid [[thread_position_in_grid]])
 {
     uint outCh = dims.y, width = dims.z, height = dims.w;
     if (gid.x >= width || gid.y >= height || gid.z >= outCh) return;
+
     constexpr sampler s(address::clamp_to_zero, filter::nearest);
     uint inCh = dims.x;
+    int kHalf = int(kSize) / 2;   // 修正：half → kHalf
     float sum = bias[gid.z];
+
     for (uint ic = 0; ic < inCh; ++ic) {
-        uint wBase = ((gid.z * inCh) + ic) * 9;
-        for (int dy = -1; dy <= 1; ++dy) {
-            for (int dx = -1; dx <= 1; ++dx) {
+        uint wBase = (gid.z * inCh + ic) * (kSize * kSize);
+        for (int dy = -kHalf; dy <= kHalf; ++dy) {
+            for (int dx = -kHalf; dx <= kHalf; ++dx) {
                 float2 pos = float2(gid.x + dx, gid.y + dy) + 0.5;
                 float pix = inTexture.sample(s, pos, ic).r;
-                uint wIdx = wBase + (dy+1)*3 + (dx+1);
+                uint wIdx = wBase + (dy + kHalf) * kSize + (dx + kHalf);
                 sum += pix * weights[wIdx];
             }
         }
     }
-    sum = max(sum, 0.0f);
+    sum = max(sum, 0.0f);  // ReLU
     outTexture.write(float4(sum, 0, 0, 0), gid.xy, gid.z);
 }
 
-kernel void elementwise_add(
-    texture2d_array<float, access::read>  texA [[texture(0)]],
-    texture2d_array<float, access::read>  texB [[texture(1)]],
-    texture2d_array<float, access::write> out  [[texture(2)]],
-    uint3 gid [[thread_position_in_grid]])
-{
-    if (gid.x >= out.get_width() || gid.y >= out.get_height() || gid.z >= out.get_array_size()) return;
-    float a = texA.read(gid.xy, gid.z).r;
-    float b = texB.read(gid.xy, gid.z).r;
-    out.write(float4(a + b, 0, 0, 0), gid.xy, gid.z);
-}
-
-kernel void pixel_shuffle(
-    texture2d_array<float, access::read>   inTexture  [[texture(0)]],
-    texture2d<float, access::write>        outTexture [[texture(1)]],
-    constant uint& r [[buffer(0)]],
-    uint2 gid [[thread_position_in_grid]])
-{
-    uint outW = outTexture.get_width(), outH = outTexture.get_height();
-    if (gid.x >= outW || gid.y >= outH) return;
-    uint inW = outW / r, inH = outH / r;
-    uint inX = gid.x / r, inY = gid.y / r;
-    uint ch = (gid.y % r) * r + (gid.x % r);
-    float val = inTexture.read(uint2(inX, inY), ch).r;
-    outTexture.write(float4(val, 0, 0, 0), gid);
-}
+// ---------- 纹理相加 (2D) ----------
 
 kernel void add_2d(
     texture2d<float, access::read>  texA [[texture(0)]],
@@ -306,6 +286,8 @@ kernel void add_2d(
     out.write(float4(a + b, 0.0, 0.0, 1.0), gid);
 }
 
+// ---------- 双线性上采样 ----------
+
 kernel void bilinear_upsample(
     texture2d<float, access::sample>  src [[texture(0)]],
     texture2d<float, access::write>   dst [[texture(1)]],
@@ -317,4 +299,111 @@ kernel void bilinear_upsample(
     constexpr sampler s(address::clamp_to_edge, filter::linear);
     float val = src.sample(s, uv).r;
     dst.write(float4(val, 0.0, 0.0, 1.0), gid);
+}
+
+// ---------- 安全转换：R32Float → R8Unorm ----------
+
+kernel void convert_to_r8unorm(
+    texture2d<float, access::read>  src [[texture(0)]],
+    texture2d<float, access::write> dst [[texture(1)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= dst.get_width() || gid.y >= dst.get_height()) return;
+    float val = src.read(gid).r;
+    val = clamp(val, 0.0f, 1.0f);
+    dst.write(float4(val, 0.0, 0.0, 1.0), gid);
+}
+
+// ---------- 运动估计 (8x8 块匹配) ----------
+kernel void block_motion_estimation(
+    texture2d<float, access::read>  curTexture  [[texture(0)]],
+    texture2d<float, access::read>  refTexture  [[texture(1)]],
+    texture2d<uint, access::write>  motion      [[texture(2)]], // R: mv.x, G: mv.y
+    constant uint& blockSize  [[buffer(0)]],
+    constant uint& searchRange [[buffer(1)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    uint2 blockCoord = gid * blockSize;
+    float bestCost = 1e10;
+    int2 bestMV = 0;
+
+    for (int dy = -int(searchRange); dy <= int(searchRange); ++dy) {
+        for (int dx = -int(searchRange); dx <= int(searchRange); ++dx) {
+            float cost = 0.0;
+            for (uint y = 0; y < blockSize; ++y) {
+                for (uint x = 0; x < blockSize; ++x) {
+                    uint2 curCoord = blockCoord + uint2(x, y);
+                    uint2 refCoord = uint2(int(curCoord.x) + dx, int(curCoord.y) + dy);
+                    curCoord = clamp(curCoord, uint2(0), uint2(curTexture.get_width()-1, curTexture.get_height()-1));
+                    refCoord = clamp(refCoord, uint2(0), uint2(refTexture.get_width()-1, refTexture.get_height()-1));
+                    float diff = curTexture.read(curCoord).r - refTexture.read(refCoord).r;
+                    cost += diff * diff;
+                }
+            }
+            if (cost < bestCost) {
+                bestCost = cost;
+                bestMV = int2(dx, dy);
+            }
+        }
+    }
+    uint encodedX = uint(bestMV.x + 32768);
+    uint encodedY = uint(bestMV.y + 32768);
+    motion.write(uint4(encodedX, encodedY, 0, 0), gid);
+}
+
+// ---------- 运动补偿 ----------
+kernel void motion_compensate(
+    texture2d<float, access::read>  refTexture [[texture(0)]],
+    texture2d<uint, access::read>   motion     [[texture(1)]],
+    texture2d<float, access::write> dstTexture [[texture(2)]],
+    constant uint& blockSize [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    uint2 blockCoord = (gid / blockSize) * blockSize;
+    uint2 mvRaw = motion.read(blockCoord / blockSize).rg;
+    int2 mv = int2(int(mvRaw.x) - 32768, int(mvRaw.y) - 32768);
+    int2 refCoord = int2(gid) + mv;
+    refCoord = clamp(refCoord, int2(0), int2(refTexture.get_width()-1, refTexture.get_height()-1));
+    float val = refTexture.read(uint2(refCoord)).r;
+    dstTexture.write(float4(val, 0, 0, 0), gid);
+}
+
+// ---------- 非局部时域滤波 ----------
+kernel void nonlocal_temporal_filter(
+    texture2d<float, access::read>  curTexture  [[texture(0)]],
+    texture2d<float, access::read>  aligned0    [[texture(1)]],
+    texture2d<float, access::read>  aligned1    [[texture(2)]],
+    texture2d<float, access::write> dstTexture  [[texture(3)]],
+    constant float& decay [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    const int radius = 1;
+    float cur = curTexture.read(gid).r;
+    float sumWeight = 1.0;
+    float sumPixel = cur;
+
+    float weightHist = decay;
+    for (int f = 0; f < 2; ++f) {
+        texture2d<float, access::read> hist = (f == 0) ? aligned0 : aligned1;
+        float bestDiff = 1e10;
+        float bestVal = hist.read(gid).r;
+        for (int dy = -radius; dy <= radius; ++dy) {
+            for (int dx = -radius; dx <= radius; ++dx) {
+                int2 sampleCoord = int2(gid) + int2(dx, dy);
+                sampleCoord = clamp(sampleCoord, int2(0), int2(hist.get_width()-1, hist.get_height()-1));
+                float histVal = hist.read(uint2(sampleCoord)).r;
+                float diff = fabs(histVal - cur);
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestVal = histVal;
+                }
+            }
+        }
+        float similarity = exp(-bestDiff * 10.0);
+        sumPixel += bestVal * similarity * weightHist;
+        sumWeight += similarity * weightHist;
+        weightHist *= decay;
+    }
+    float result = sumPixel / sumWeight;
+    dstTexture.write(float4(result, 0, 0, 0), gid);
 }

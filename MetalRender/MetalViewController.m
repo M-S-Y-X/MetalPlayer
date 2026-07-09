@@ -114,7 +114,7 @@ typedef struct {
 }
 
 - (void)cycleMode:(NSButton *)sender {
-    NSInteger totalModes = 5;
+    NSInteger totalModes = 6; // 0~5，共6种模式
     NSInteger newMode = (self.srEngine.mode + 1) % totalModes;
     self.srEngine.mode = (SRMode)newMode;
     switch (self.srEngine.mode) {
@@ -122,6 +122,7 @@ typedef struct {
         case SRModeLanczos:        sender.title = @"Mode: Lanczos only"; break;
         case SRModeIBP:            sender.title = @"Mode: IBP (single)"; break;
         case SRModeTemporalIBP:    sender.title = @"Mode: IBP+Temporal"; break;
+        case SRModeTemporalPlus:   sender.title = @"Mode: Temporal+"; break;
         case SRModeDeepLearning:   sender.title = @"Mode: DeepLearning"; break;
     }
     [self.srEngine resetHistory];

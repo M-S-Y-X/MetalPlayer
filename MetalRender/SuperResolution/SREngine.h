@@ -5,6 +5,7 @@ typedef NS_ENUM(NSInteger, SRMode) {
     SRModeLanczos,
     SRModeIBP,
     SRModeTemporalIBP,
+    SRModeTemporalPlus,    // 新增：运动估计+非局部时域滤波+IBP
     SRModeDeepLearning
 };
 

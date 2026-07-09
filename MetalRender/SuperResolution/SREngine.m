@@ -9,6 +9,7 @@ typedef struct { uint32_t x; uint32_t y; } UInt2;
 @interface SREngine ()
 @property (nonatomic, strong) id<MTLDevice> device;
 
+// 原有管线
 @property (nonatomic, strong) id<MTLComputePipelineState> lanczosHorizontalPipeline;
 @property (nonatomic, strong) id<MTLComputePipelineState> lanczosVerticalPipeline;
 @property (nonatomic, strong) id<MTLComputePipelineState> downsampleBlurPipeline;
@@ -18,10 +19,21 @@ typedef struct { uint32_t x; uint32_t y; } UInt2;
 @property (nonatomic, strong) id<MTLComputePipelineState> blendTemporalPipeline;
 @property (nonatomic, strong) id<MTLComputePipelineState> usmSharpenPipeline;
 
+// 新增运动估计+时域滤波管线
+@property (nonatomic, strong) id<MTLComputePipelineState> blockMEpipeline;
+@property (nonatomic, strong) id<MTLComputePipelineState> motionCompPipeline;
+@property (nonatomic, strong) id<MTLComputePipelineState> nonlocalTemporalPipeline;
+
+// 时域历史（原有时域IBP用）
 @property (nonatomic, strong) id<MTLTexture> prevHighResY;
 @property (nonatomic, assign) CGSize prevTargetSize;
 @property (nonatomic, assign) BOOL temporalHistoryValid;
 
+// 多帧历史（TemporalPlus用）
+@property (nonatomic, strong) NSMutableArray<id<MTLTexture>> *historyFrames;
+@property (nonatomic, strong) id<MTLTexture> motionVectorTexture;
+
+// 深度学习引擎
 @property (nonatomic, strong) DeepLearningSR *deepSR;
 @end
 
@@ -37,6 +49,8 @@ typedef struct { uint32_t x; uint32_t y; } UInt2;
         self.temporalWeight = 0.85;
         self.sharpenIntensity = 0.4;
         self.temporalHistoryValid = NO;
+        self.prevHighResY = nil;
+        self.historyFrames = [NSMutableArray array];
         [self setupPipelines];
         _deepSR = [[DeepLearningSR alloc] initWithDevice:device];
     }
@@ -45,6 +59,8 @@ typedef struct { uint32_t x; uint32_t y; } UInt2;
 
 - (void)setupPipelines {
     id<MTLLibrary> lib = [self.device newDefaultLibrary];
+    
+    // 原有内核
     NSArray *names = @[@"lanczos_horizontal", @"lanczos_vertical",
                        @"downsample_blur", @"error_compute",
                        @"upscale_error", @"back_project",
@@ -63,14 +79,30 @@ typedef struct { uint32_t x; uint32_t y; } UInt2;
         else if ([name isEqualToString:@"blend_temporal"]) self.blendTemporalPipeline = p;
         else if ([name isEqualToString:@"usm_sharpen"]) self.usmSharpenPipeline = p;
     }
+    
+    // 新内核
+    self.blockMEpipeline = [self.device newComputePipelineStateWithFunction:[lib newFunctionWithName:@"block_motion_estimation"] error:nil];
+    self.motionCompPipeline = [self.device newComputePipelineStateWithFunction:[lib newFunctionWithName:@"motion_compensate"] error:nil];
+    self.nonlocalTemporalPipeline = [self.device newComputePipelineStateWithFunction:[lib newFunctionWithName:@"nonlocal_temporal_filter"] error:nil];
 }
 
 - (void)resetHistory {
     self.temporalHistoryValid = NO;
     self.prevHighResY = nil;
+    [self.historyFrames removeAllObjects];
+    self.motionVectorTexture = nil;
 }
 
-#pragma mark - Lanczos
+#pragma mark - 通用工具
+
+- (id<MTLTexture>)newTextureWithWidth:(NSUInteger)width height:(NSUInteger)height {
+    MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
+                                                                                     width:width height:height mipmapped:NO];
+    desc.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+    return [self.device newTextureWithDescriptor:desc];
+}
+
+#pragma mark - Lanczos 上采样
 
 - (id<MTLTexture>)upscaleTextureLanczos:(id<MTLTexture>)src
                                 toWidth:(NSUInteger)width height:(NSUInteger)height
@@ -110,14 +142,7 @@ typedef struct { uint32_t x; uint32_t y; } UInt2;
     return outTex;
 }
 
-- (id<MTLTexture>)newTextureWithWidth:(NSUInteger)width height:(NSUInteger)height {
-    MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
-                                                                                     width:width height:height mipmapped:NO];
-    desc.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
-    return [self.device newTextureWithDescriptor:desc];
-}
-
-#pragma mark - IBP
+#pragma mark - IBP 迭代
 
 - (id<MTLTexture>)runIBPIterationsOn:(id<MTLTexture>)highInit
                            reference:(id<MTLTexture>)lowRes
@@ -258,7 +283,112 @@ typedef struct { uint32_t x; uint32_t y; } UInt2;
     return outTex;
 }
 
-#pragma mark - 主入口
+#pragma mark - TemporalPlus 新方法
+
+- (id<MTLTexture>)applyTemporalPlusToYTexture:(id<MTLTexture>)yLow
+                                   targetSize:(CGSize)targetSize
+                                commandBuffer:(id<MTLCommandBuffer>)cb {
+    id<MTLTexture> curHR = [self upscaleTextureLanczos:yLow
+                                              toWidth:targetSize.width height:targetSize.height
+                                        commandBuffer:cb];
+    
+    if (self.historyFrames.count > 0) {
+        id<MTLTexture> prevHR = self.historyFrames.lastObject;
+        
+        // 1. 运动估计
+        [self estimateMotion:curHR reference:prevHR commandBuffer:cb];
+        
+        // 2. 运动补偿历史帧
+        id<MTLTexture> alignedPrev = [self motionCompensateTexture:prevHR commandBuffer:cb];
+        id<MTLTexture> alignedPrev2 = nil;
+        if (self.historyFrames.count >= 2) {
+            alignedPrev2 = [self motionCompensateTexture:self.historyFrames[self.historyFrames.count-2] commandBuffer:cb];
+        }
+        
+        // 3. 非局部时域滤波
+        id<MTLTexture> filtered = [self nonlocalTemporalFilter:curHR aligned:alignedPrev aligned2:alignedPrev2 commandBuffer:cb];
+        
+        // 4. 以滤波结果作为 IBP 初始估计
+        id<MTLTexture> afterIBP = [self runIBPIterationsOn:filtered reference:yLow commandBuffer:cb];
+        
+        // 5. 更新历史
+        [self updateHistoryWithFrame:afterIBP commandBuffer:cb];
+        
+        return afterIBP;
+    } else {
+        // 没有历史，回退到普通 IBP
+        id<MTLTexture> init = [self upscaleTextureLanczos:yLow toWidth:targetSize.width height:targetSize.height commandBuffer:cb];
+        id<MTLTexture> result = [self runIBPIterationsOn:init reference:yLow commandBuffer:cb];
+        [self updateHistoryWithFrame:result commandBuffer:cb];
+        return result;
+    }
+}
+
+- (void)estimateMotion:(id<MTLTexture>)cur reference:(id<MTLTexture>)ref commandBuffer:(id<MTLCommandBuffer>)cb {
+    uint blockSize = 8;
+    uint searchRange = 4;
+    NSUInteger mw = cur.width / blockSize, mh = cur.height / blockSize;
+    if (!self.motionVectorTexture || self.motionVectorTexture.width != mw || self.motionVectorTexture.height != mh) {
+        MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRG32Uint
+                                                                                         width:mw height:mh mipmapped:NO];
+        desc.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+        self.motionVectorTexture = [self.device newTextureWithDescriptor:desc];
+    }
+    
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:self.blockMEpipeline];
+    [enc setTexture:cur atIndex:0];
+    [enc setTexture:ref atIndex:1];
+    [enc setTexture:self.motionVectorTexture atIndex:2];
+    [enc setBytes:&blockSize length:sizeof(uint) atIndex:0];
+    [enc setBytes:&searchRange length:sizeof(uint) atIndex:1];
+    MTLSize grid = MTLSizeMake(mw, mh, 1);
+    [enc dispatchThreads:grid threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
+    [enc endEncoding];
+}
+
+- (id<MTLTexture>)motionCompensateTexture:(id<MTLTexture>)ref commandBuffer:(id<MTLCommandBuffer>)cb {
+    id<MTLTexture> aligned = [self newTextureWithWidth:ref.width height:ref.height];
+    uint blockSize = 8;
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:self.motionCompPipeline];
+    [enc setTexture:ref atIndex:0];
+    [enc setTexture:self.motionVectorTexture atIndex:1];
+    [enc setTexture:aligned atIndex:2];
+    [enc setBytes:&blockSize length:sizeof(uint) atIndex:0];
+    MTLSize grid = MTLSizeMake(ref.width, ref.height, 1);
+    [enc dispatchThreads:grid threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
+    [enc endEncoding];
+    return aligned;
+}
+
+- (id<MTLTexture>)nonlocalTemporalFilter:(id<MTLTexture>)cur aligned:(id<MTLTexture>)aligned0 aligned2:(id<MTLTexture>)aligned1 commandBuffer:(id<MTLCommandBuffer>)cb {
+    id<MTLTexture> filtered = [self newTextureWithWidth:cur.width height:cur.height];
+    float decay = 0.7f;
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:self.nonlocalTemporalPipeline];
+    [enc setTexture:cur atIndex:0];
+    [enc setTexture:aligned0 atIndex:1];
+    [enc setTexture:(aligned1 ?: aligned0) atIndex:2];
+    [enc setTexture:filtered atIndex:3];
+    [enc setBytes:&decay length:sizeof(float) atIndex:0];
+    MTLSize grid = MTLSizeMake(cur.width, cur.height, 1);
+    [enc dispatchThreads:grid threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
+    [enc endEncoding];
+    return filtered;
+}
+
+- (void)updateHistoryWithFrame:(id<MTLTexture>)frame commandBuffer:(id<MTLCommandBuffer>)cb {
+    if (!self.historyFrames) self.historyFrames = [NSMutableArray array];
+    id<MTLTexture> copy = [self newTextureWithWidth:frame.width height:frame.height];
+    id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+    [blit copyFromTexture:frame toTexture:copy];
+    [blit endEncoding];
+    [self.historyFrames addObject:copy];
+    if (self.historyFrames.count > 3) [self.historyFrames removeObjectAtIndex:0];
+}
+
+#pragma mark - 主处理入口
 
 - (id<MTLTexture>)processYTexture:(id<MTLTexture>)yLow
                   uTexture:(id<MTLTexture>)uLow
@@ -269,15 +399,13 @@ typedef struct { uint32_t x; uint32_t y; } UInt2;
          outVTexture:(id<MTLTexture> * _Nullable)outV
 {
     id<MTLTexture> yOut = nil;
-    id<MTLTexture> uOut = nil;
-    id<MTLTexture> vOut = nil;
+    id<MTLTexture> uOut = nil, vOut = nil;
     
     if (self.mode != SRModeOff) {
         uOut = [self upscaleTextureLanczos:uLow toWidth:targetSize.width/2 height:targetSize.height/2 commandBuffer:cb];
         vOut = [self upscaleTextureLanczos:vLow toWidth:targetSize.width/2 height:targetSize.height/2 commandBuffer:cb];
     } else {
-        uOut = uLow;
-        vOut = vLow;
+        uOut = uLow; vOut = vLow;
     }
     
     switch (self.mode) {
@@ -295,6 +423,9 @@ typedef struct { uint32_t x; uint32_t y; } UInt2;
         }
         case SRModeTemporalIBP:
             yOut = [self applyTemporalIBP:yLow targetSize:targetSize commandBuffer:cb];
+            break;
+        case SRModeTemporalPlus:
+            yOut = [self applyTemporalPlusToYTexture:yLow targetSize:targetSize commandBuffer:cb];
             break;
         case SRModeDeepLearning:
             yOut = [self.deepSR processYTexture:yLow targetSize:targetSize commandBuffer:cb];
