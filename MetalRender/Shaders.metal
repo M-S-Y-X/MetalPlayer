@@ -1,3 +1,8 @@
+//
+//  Shaders.metal
+//
+
+
 #include <metal_stdlib>
 using namespace metal;
 
@@ -406,4 +411,21 @@ kernel void nonlocal_temporal_filter(
     }
     float result = sumPixel / sumWeight;
     dstTexture.write(float4(result, 0, 0, 0), gid);
+}
+
+fragment float4 fragment_rgba_display(
+    VertexOut in [[stage_in]],
+    texture2d<float, access::sample> rgbaTexture [[texture(0)]])
+{
+    constexpr sampler s(address::clamp_to_edge, filter::linear);
+    float4 color = rgbaTexture.sample(s, in.texCoord);
+    
+    // 如果颜色全黑，显示红色网格以便确认片段着色器在工作
+    float isBlack = (color.r + color.g + color.b) < 0.001;
+    if (isBlack) {
+        float2 grid = fract(in.texCoord * 30.0);
+        float gridLine = step(0.98, max(grid.x, grid.y));
+        return float4(1.0, 0.0, 0.0, 1.0) * gridLine;
+    }
+    return color;
 }
